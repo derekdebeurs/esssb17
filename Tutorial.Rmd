@@ -1,0 +1,250 @@
+---
+title: "A tutorial on network analysis of suicidal behavior in R"
+author: "Derek de Beurs, Eiko Fried, Rory O'Connor, Claudia van Borkulo"
+date: "18-6-2017"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Recently, the first paper to apply networkanalysis within the field of suicidology has been published in the British Journal of Psychiatry open (de Beurs et al 2017).
+
+I develped the idea of applying networkanalysis when visiting the Suicide Research Laboratory of Professor O' Connor during my PhD around 2014. Prof O'Connor proposed a higly influential model that combines different models that explain one aspect of suicidal behavior. This model, the Integrated motivational volitional model contains many different variables that all interact in a suicidal person.
+
+I wondered how to best test the assuptions of the proposed interaction, and rembered reading about network analysis. 
+
+Network analysis has been introduced within the field of psychopathology to model the complex interaction between many highly correlated and interacting variables (Borsboom & Cramer 2013; Fried et al. 2016). Additionally, networks among subgroups can be compared (for example, does the network of males differ from the network of females), and the most central or most connected variables can be detected(van Borkulo et al. 2015). 
+
+I obtained data from Professor O'Connor on 367 patients treated in a hospital after a suicide attempt. Using linkage data, his team was able to determine wether patients were treated for a new episode of suicidal behavior within 15 months.
+
+In this blog I offer and comment on the code used in the BJP article. Also, I add a novel analysis, not yet available at the time when writing the article: accuracy and stability estimation.
+
+By doing so, and by refering to relevant literature, I hope to inspire researcher within the field of suciide prevention to use network analysis on their own data.
+
+
+
+## Loading the right packages
+
+```{r message = FALSE}
+library("bootnet")
+library("qgraph")
+library("dplyr")
+library("haven")
+library("NetworkComparisonTest")
+```
+
+## what is a network?
+
+``` {r, message = FALSE}
+one <- matrix ( c(0,0,
+               0,0), nrow=2, 
+               ncol=2)
+
+colnames(one) <- c("Node","Node")
+
+qgraph(one, vsize = 15)
+
+two <- matrix ( c(0,1,
+                  1,0), nrow=2, 
+                ncol=2)
+colnames(two) <- c("Node","Node")
+
+qgraph(two, vsize = 15)
+
+
+three <- matrix ( c(0,3,
+                  3,0), nrow=2, 
+                ncol=2)
+
+colnames(three) <- c("Node","Node")
+
+qgraph(three, layout = "circle", vsize = 15)
+
+
+four <- matrix ( c(0,-3,
+                  -3,0), nrow=2, 
+                ncol=2)
+
+colnames(four) <- c("Node","Node")
+
+
+five <- matrix ( c(0,3,
+                  3,0), nrow=2, 
+                ncol=2)
+
+colnames(five) <- c("D","R")
+
+qgraph(five, layout = "circle", vsize = 15)
+
+six <- matrix ( c(0,4,3,
+                   4,0,0, 
+                   3,0,0), nrow=3, 
+                 ncol=3)
+
+colnames(six) <- c("D","R", "C")
+
+qgraph(six, layout = "spring", vsize = 15)
+
+qgraph(six, layout = "spring", vsize = 5)
+
+centralityPlot(six)
+
+
+
+
+
+```
+
+
+
+## cleaning up your work space
+
+```{r, message = FALSE}
+rm(list = ls())
+
+```
+
+
+
+
+## read the file
+
+```{r message = FALSE}
+
+ setwd("~/Dropbox/SUPER/Tutorial")
+ suicide <- read_spss("BJP_2017_deBeursetal.sav")
+
+```
+
+
+
+## rename the variables
+
+```{r message = FALSE}
+
+suicide <- rename(suicide, rep =suicide_suicide_attempt_followup ) ## rename outcome variable
+suicide <- rename(suicide, liv = S1) ## rename variable 1 etc
+suicide <- rename(suicide, die = S2)
+suicide <- rename(suicide, rea = S3)
+suicide <- rename(suicide, des = S4)
+suicide <- rename(suicide, pas = S5)
+suicide <- rename(suicide, dur = S6)
+suicide <- rename(suicide, fre = S7)
+suicide <- rename(suicide, att = S8)
+suicide <- rename(suicide, con = S9)
+suicide <- rename(suicide, det = S10)
+suicide <- rename(suicide, cry = S11)
+suicide <- rename(suicide, pla = S12)
+suicide <- rename(suicide, met = S13)
+suicide <- rename(suicide, cou = S14)
+suicide <- rename(suicide, exp = S15)
+suicide <- rename(suicide, pre = S16)
+suicide <- rename(suicide, not = S17)
+suicide <- rename(suicide, arr = S18)
+suicide <- rename(suicide, cea = S19)
+
+```
+
+## split file for suicide at follow up and no suicide at follow up
+
+```{r message = FALSE}
+repeater <- subset(suicide, rep == 1 )
+nonrepeater <- subset(suicide, rep == 0 )
+```
+
+## subset for all patients containing SSI items and future attempt
+
+```{r message = FALSE}
+
+full <- subset(suicide, select = c(liv,die,rea,des,pas, dur,fre, att,con,det,cry,pla,met,cou,exp,pre,not,arr,cea, rep))
+
+# subset for repeater containing SSI items 
+subset_repeater <- subset(repeater, select = c(liv,die,rea,des,pas, dur,fre, att,con,det,cry,pla,met,cou,exp,pre,not,arr,cea))
+
+# subset for nonrepeater containing SSI items 
+subset_nonrepeater <- subset(nonrepeater, select = c(liv,die,rea,des,pas, dur,fre, att,con,det,cry,pla,met,cou,exp,pre,not,arr,cea))
+
+```
+
+## Making group names
+
+```{r message = FALSE}
+groups <- structure(list(Motivational = c(1,2,3,4,5,6,7,8, 11), 
+                         Volititional = c(9,10,12,13,14,15,16,17,18,19), 
+                         FutureAttempt = c(20)), 
+                    Names = c("motivational", 
+                              "volitional", "Repeat suicidal behaviour"))
+
+# make group vector to color motivational and volitional  factors, without future attempt
+sub_groups <- structure(list(Motivational = c(1,2,3,4,5,6,7,8, 11), # define group without repeat suicidal behaviour
+                            Volititional = c(9,10,12,13,14,15,16,17,18,19)), 
+                       Names = c("motivational", 
+                                 "volitional"))
+```
+
+## estimating network
+
+```{r message = FALSE}
+Network1 <-estimateNetwork(full, default = "EBICglasso")
+plot(Network1, groups = groups, layout = 'spring')
+```
+## centrality plot
+
+```{r message = FALSE}
+centralityPlot(Network1)
+```
+
+##  comparing networks
+
+```{r message = FALSE}
+Network2 <-estimateNetwork(subset_repeater, default = "EBICglasso")
+Network3 <-estimateNetwork(subset_nonrepeater, default = "EBICglasso")
+
+
+par(mfrow=c(1,2))
+plot(Network2, groups = sub_groups, layout = 'circle', legend = FALSE, title = "repeaters")
+plot(Network3, groups = sub_groups, layout = 'circle', legend = FALSE, title = "non-repeaters")
+```
+
+## comparing centralities
+
+```{r message = FALSE}
+centralityPlot(list(repeater = Network2, no_repeater = Network3) )
+```
+
+## testing for differences 
+
+```{r message = FALSE}
+### Compare networks of data sets using NCT ###
+# with gamma = 0. Iterations set to 10 to save time. Should be 1000 at least.
+subset_nonrepeater <- na.omit(subset_nonrepeater)
+subset_repeater <- na.omit(subset_repeater)
+
+Res_0 <- NCT(subset_nonrepeater, subset_repeater, gamma=0, it=10, binary.data = F)
+
+
+```
+
+## testing stability and accuracy
+
+```{r message = FALSE, eval = FALSE}
+#### bootnet
+
+boot1 <- bootnet(Network1, nBoots = 10,
+                 nCores = 8)
+
+plot(boot1, labels = FALSE,
+     order = "sample")
+
+boot2 <- bootnet(Network1, nBoots = 10,
+                 type = "case", nCores = 8)
+plot(boot2)
+corStability(boot2)
+```
+
